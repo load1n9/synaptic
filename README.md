@@ -4,9 +4,9 @@
 	<br>
  <p align="center">
  
- ---
+<hr>
 dependency-less neural network library 
-[Synaptic.js](https://github.com/cazala/synaptic) ported to [Deno](https://deno.land/)
+<a href="https://github.com/cazala/synaptic">Synaptic.js</a> ported to <a href="https://deno.land/">Deno</a>
 
 ## Usage:
 
