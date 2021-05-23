@@ -1,8 +1,8 @@
-export let connections: number = 0;
+export let connections = 0;
 
 export class Connection {
   public ID = Connection.uid();
-  public gain: number = 1;
+  public gain = 1;
   public gater: any = null;
   public weight: any;
   public constructor(

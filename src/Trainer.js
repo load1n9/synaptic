@@ -1,28 +1,10 @@
-const shuffleInplace = (o) => { 
+import * as cost from './Cost.ts';
+
+const shuffleInplace = (o) => {
     for (let j, x, i = o.length; i; j = Math.floor(Math.random() * i), x = o[--i], o[i] = o[j], o[j] = x);
     return o;
 };
 
-const cost = {
-    CROSS_ENTROPY:  (target, output) => {
-        var crossentropy = 0;
-        for (var i in output)
-            crossentropy -= (target[i] * Math.log(output[i] + 1e-15)) + ((1 - target[i]) * Math.log((1 + 1e-15) - output[i])); // +1e-15 is a tiny push away to avoid Math.log(0)
-        return crossentropy;
-    },
-    MSE:  (target, output) => {
-        var mse = 0;
-        for (var i = 0; i < output.length; i++)
-            mse += Math.pow(target[i] - output[i], 2);
-        return mse / output.length;
-    },
-    BINARY: (target, output) => {
-        var misses = 0;
-        for (var i = 0; i < output.length; i++)
-            misses += Math.round(target[i] * 2) != Math.round(output[i] * 2);
-        return misses;
-    }
-};
 
 
 export class Trainer {
@@ -38,7 +20,6 @@ export class Trainer {
         this.crossValidate = options.crossValidate || null;
     }
 
-    // trains any given set to a network
     train(set, options) {
         var error = 1;
         var iterations = bucketSize = 0;
@@ -61,7 +42,6 @@ export class Trainer {
             if (options.schedule)
                 this.schedule = options.schedule;
             if (options.customLog) {
-                // for backward compatibility with code that used customLog
                 console.log('Deprecated: use schedule instead of customLog')
                 this.schedule = options.customLog;
             }
@@ -114,7 +94,6 @@ export class Trainer {
                 currentSetSize = set.length;
             }
 
-            // check error
             error /= currentSetSize;
             lastError = error;
 
@@ -125,13 +104,12 @@ export class Trainer {
                 else if (options.log && iterations % options.log == 0) {
                     console.log('iterations', iterations, 'error', error, 'rate', currentRate);
                 }
-                ;
                 if (options.shuffle)
                     shuffleInplace(set);
             }
         }
 
-        var results = {
+        const results = {
             error: error,
             iterations: iterations,
             time: Date.now() - start
@@ -140,7 +118,6 @@ export class Trainer {
         return results;
     }
 
-    // trains any given set to a network, using a WebWorker (only for the browser). Returns a Promise of the results.
     trainAsync(set, options) {
         var train = this.workerTrain.bind(this);
         return new Promise(function (resolve, reject) {
@@ -152,14 +129,13 @@ export class Trainer {
         })
     }
 
-    // preforms one training epoch and returns the error (private function used in this.train)
     _trainSet(set, currentRate, costFunction) {
         var errorSum = 0;
-        for (var i = 0; i < set.length; i++) {
-            var input = set[i].input;
-            var target = set[i].output;
+        for (let i = 0; i < set.length; i++) {
+            const input = set[i].input;
+            const target = set[i].output;
 
-            var output = this.network.activate(input);
+            const output = this.network.activate(input);
             this.network.propagate(currentRate, target);
 
             errorSum += costFunction(target, output);
@@ -167,7 +143,6 @@ export class Trainer {
         return errorSum;
     }
 
-    // tests a set and returns the error and elapsed time
     test(set, options) {
         var error = 0;
         var input, output, target;
@@ -175,7 +150,7 @@ export class Trainer {
 
         var start = Date.now();
 
-        for (var i = 0; i < set.length; i++) {
+        for (let i = 0; i < set.length; i++) {
             input = set[i].input;
             target = set[i].output;
             output = this.network.activate(input);
@@ -192,7 +167,6 @@ export class Trainer {
         return results;
     }
 
-    // trains any given set to a network using a WebWorker [deprecated: use trainAsync instead]
     workerTrain(set, callback, options, suppressWarning) {
         if (!suppressWarning) {
             console.warn('Deprecated: do not use `workerTrain`, use `trainAsync` instead.')
@@ -202,10 +176,8 @@ export class Trainer {
         if (!this.network.optimized)
             this.network.optimize();
 
-        // Create a new worker
         var worker = this.network.worker(this.network.optimized.memory, set, options);
 
-        // train the worker
         worker.onmessage = function (e) {
             switch (e.data.action) {
                 case 'done':
@@ -215,14 +187,12 @@ export class Trainer {
 
                     that.network.optimized.ownership(e.data.memoryBuffer);
 
-                    // Done callback
                     callback({
                         error: error,
                         iterations: iterations,
                         time: time
                     });
 
-                    // Delete the worker and all its associated memory
                     worker.terminate();
                     break;
 
@@ -238,11 +208,9 @@ export class Trainer {
             }
         };
 
-        // Start the worker
         worker.postMessage({ action: 'startTraining' });
     }
 
-    // trains an XOR to the network
     XOR(options) {
         if (this.network.inputs() != 2 || this.network.outputs() != 1)
             throw new Error('Incompatible network (2 inputs, 1 output)');
@@ -273,7 +241,6 @@ export class Trainer {
         }], defaults);
     }
 
-    // trains the network to pass a Distracted Sequence Recall test
     DSR(options) {
         options = options || {};
 
@@ -312,7 +279,6 @@ export class Trainer {
         var start = Date.now();
 
         while (trial < iterations && (success < criterion || trial % 1000 != 0)) {
-            // generate sequence
             var sequence = [],
                 sequenceLength = length - prompts.length;
             for (i = 0; i < sequenceLength; i++) {
@@ -331,18 +297,15 @@ export class Trainer {
                 sequence.push(prompts[i]);
             }
 
-            //train sequence
             var distractorsCorrect;
             var targetsCorrect = distractorsCorrect = 0;
             error = 0;
             for (i = 0; i < length; i++) {
-                // generate input from sequence
                 var input = [];
                 for (j = 0; j < symbols; j++)
                     input[j] = 0;
                 input[sequence[i]] = 1;
 
-                // generate target output
                 var output = [];
                 for (j = 0; j < targets.length; j++)
                     output[j] = 0;
@@ -352,7 +315,6 @@ export class Trainer {
                     output[indexes[index]] = 1;
                 }
 
-                // check result
                 var prediction = this.network.activate(input);
 
                 if (equal(prediction, output))
@@ -370,7 +332,6 @@ export class Trainer {
                     correct++;
             }
 
-            // calculate error
             if (trial % 1000 == 0)
                 correct = 0;
             trial++;
@@ -379,7 +340,6 @@ export class Trainer {
             success = correct / divideError;
             error /= length;
 
-            // log
             if (log && trial % log == 0)
                 console.log('iterations:', trial, ' success:', success, ' correct:',
                     correct, ' time:', Date.now() - start, ' error:', error);
@@ -401,7 +361,6 @@ export class Trainer {
         }
     }
 
-    // train the network to learn an Embeded Reber Grammar
     ERG(options) {
 
         options = options || {};
@@ -411,7 +370,6 @@ export class Trainer {
         var log = options.log || 500;
         var cost = options.cost || this.cost || Trainer.cost.CROSS_ENTROPY;
 
-        // gramar node
         var Node = function () {
             this.paths = [];
         };
@@ -439,7 +397,6 @@ export class Trainer {
 
         var reberGrammar = function () {
 
-            // build a reber grammar
             var output = new Node();
             var n1 = (new Node()).connect(output, 'E');
             var n2 = (new Node()).connect(n1, 'S');
@@ -458,7 +415,6 @@ export class Trainer {
             }
         };
 
-        // build an embeded reber grammar
         var embededReberGrammar = function () {
             var reber1 = reberGrammar();
             var reber2 = reberGrammar();
@@ -478,7 +434,6 @@ export class Trainer {
 
         };
 
-        // generate an ERG sequence
         var generate = function () {
             var node = embededReberGrammar().input;
             var next = node.any();
@@ -490,7 +445,6 @@ export class Trainer {
             return str;
         };
 
-        // test if a string matches an embeded reber grammar
         var test = function (str) {
             var node = embededReberGrammar().input;
             var i = 0;
@@ -505,7 +459,6 @@ export class Trainer {
             return true;
         };
 
-        // helper to check if the output and the target vectors match
         var different = function (array1, array2) {
             var max1 = 0;
             var i1 = -1;
@@ -541,15 +494,11 @@ export class Trainer {
             var i = 0;
             error = 0;
 
-            // ERG sequence to learn
             var sequence = generate();
 
-            // input
             var read = sequence.charAt(i);
-            // target
             var predict = sequence.charAt(i + 1);
 
-            // train
             while (i < sequence.length - 1) {
                 var input = [];
                 var target = [];
@@ -595,13 +544,10 @@ export class Trainer {
         if (typeof options == 'undefined')
             options = {};
 
-        // helper
         function getSamples(trainingSize, testSize) {
 
-            // sample size
             var size = trainingSize + testSize;
 
-            // generate samples
             var t = 0;
             var set = [];
             for (var i = 0; i < size; i++) {
@@ -621,13 +567,11 @@ export class Trainer {
                 t += n;
             }
 
-            // separate samples between train and test sets
             var trainingSet = [];
             var testSet = [];
             for (var l = 0; l < size; l++)
                 (l < trainingSize ? trainingSet : testSet).push(set[l]);
 
-            // return samples
             return {
                 train: trainingSet,
                 test: testSet
@@ -642,10 +586,8 @@ export class Trainer {
         var trainingSamples = options.trainSamples || 7000;
         var testSamples = options.trainSamples || 1000;
 
-        // samples for training and testing
         var samples = getSamples(trainingSamples, testSamples);
 
-        // train
         var result = this.train(samples.train, {
             rate: rate,
             log: log,

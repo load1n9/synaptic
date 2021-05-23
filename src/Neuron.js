@@ -1,31 +1,7 @@
 import { Connection, connections } from './Connection.ts';
-
+import * as squash from './Squash.ts';
 let neurons = 0;
 
-const squash = {
-  LOGISTIC: (x, derivate) => {
-    let fx = 1 / (1 + Math.exp(-x));
-    if (!derivate)
-      return fx;
-    return fx * (1 - fx);
-  },
-  TANH:  (x, derivate) => {
-    if (derivate)
-      return 1 - Math.pow(Math.tanh(x), 2);
-    return Math.tanh(x);
-  },
-  IDENTITY: (x, derivate) => {
-    return derivate ? 1 : x;
-  },
-  HLIM: (x, derivate) => {
-    return derivate ? 1 : x > 0 ? 1 : 0;
-  },
-  RELU: (x, derivate) => {
-    if (derivate)
-      return x > 0 ? 1 : 0;
-    return x > 0 ? x : 0;
-  }
-};
 
 
 export class Neuron {
@@ -52,15 +28,13 @@ export class Neuron {
     this.state = 0;
     this.old = 0;
     this.activation = 0;
-    this.selfconnection = new Connection(this, this, 0); // weight = 0 -> not connected
+    this.selfconnection = new Connection(this, this, 0);
     this.squash = Neuron.squash.LOGISTIC;
     this.neighboors = {};
     this.bias = Math.random() * .2 - .1;
   }
 
-  // activate the neuron
   activate(input) {
-    // activation from enviroment (for input neurons)
     if (typeof input != 'undefined') {
       this.activation = input;
       this.derivative = 0;
@@ -68,10 +42,8 @@ export class Neuron {
       return this.activation;
     }
 
-// old state
     this.old = this.state;
 
-// eq. 15
     this.state = this.selfconnection.gain * this.selfconnection.weight *
       this.state + this.bias;
 
@@ -80,23 +52,17 @@ export class Neuron {
       this.state += input.from.activation * input.weight * input.gain;
     }
 
-// eq. 16
     this.activation = this.squash(this.state);
 
-// f'(s)
     this.derivative = this.squash(this.state, true);
 
-// update traces
     var influences = [];
     for (var id in this.trace.extended) {
-      // extended elegibility trace
       var neuron = this.neighboors[id];
 
-      // if gated neuron's selfconnection is gated by this unit, the influence keeps track of the neuron's old state
       var influence = neuron.selfconnection.gater == this ? neuron.old : 0;
 
-      // index runs over all the incoming connections to the gated neuron that are gated by this unit
-      for (var incoming in this.trace.influences[neuron.ID]) { // captures the effect that has an input connection to this unit, on a neuron that is gated by this unit
+      for (var incoming in this.trace.influences[neuron.ID]) {
         influence += this.trace.influences[neuron.ID][incoming].weight *
           this.trace.influences[neuron.ID][incoming].from.activation;
       }
@@ -106,25 +72,21 @@ export class Neuron {
     for (var i in this.connections.inputs) {
       var input = this.connections.inputs[i];
 
-      // elegibility trace - Eq. 17
       this.trace.elegibility[input.ID] = this.selfconnection.gain * this.selfconnection
         .weight * this.trace.elegibility[input.ID] + input.gain * input.from
-        .activation;
+          .activation;
 
       for (var id in this.trace.extended) {
-        // extended elegibility trace
         var xtrace = this.trace.extended[id];
         var neuron = this.neighboors[id];
         var influence = influences[neuron.ID];
 
-        // eq. 18
         xtrace[input.ID] = neuron.selfconnection.gain * neuron.selfconnection
           .weight * xtrace[input.ID] + this.derivative * this.trace.elegibility[
           input.ID] * influence;
       }
     }
 
-//  update gated connection's gains
     for (var connection in this.connections.gated) {
       this.connections.gated[connection].gain = this.activation;
     }
@@ -132,95 +94,72 @@ export class Neuron {
     return this.activation;
   }
 
-// back-propagate the error
   propagate(rate, target) {
-    // error accumulator
     var error = 0;
 
-    // whether or not this neuron is in the output layer
     var isOutput = typeof target != 'undefined';
 
-    // output neurons get their error from the enviroment
     if (isOutput)
-      this.error.responsibility = this.error.projected = target - this.activation; // Eq. 10
+      this.error.responsibility = this.error.projected = target - this.activation; 
 
-    else // the rest of the neuron compute their error responsibilities by backpropagation
-    {
-      // error responsibilities from all the connections projected from this neuron
+    else {
       for (var id in this.connections.projected) {
         var connection = this.connections.projected[id];
         var neuron = connection.to;
-        // Eq. 21
         error += neuron.error.responsibility * connection.gain * connection.weight;
       }
 
-      // projected error responsibility
       this.error.projected = this.derivative * error;
 
       error = 0;
-      // error responsibilities from all the connections gated by this neuron
       for (var id in this.trace.extended) {
-        var neuron = this.neighboors[id]; // gated neuron
-        var influence = neuron.selfconnection.gater == this ? neuron.old : 0; // if gated neuron's selfconnection is gated by this neuron
+        var neuron = this.neighboors[id]; 
+        var influence = neuron.selfconnection.gater == this ? neuron.old : 0; 
 
-        // index runs over all the connections to the gated neuron that are gated by this neuron
-        for (var input in this.trace.influences[id]) { // captures the effect that the input connection of this neuron have, on a neuron which its input/s is/are gated by this neuron
+        for (var input in this.trace.influences[id]) { 
           influence += this.trace.influences[id][input].weight * this.trace.influences[
             neuron.ID][input].from.activation;
         }
-        // eq. 22
         error += neuron.error.responsibility * influence;
       }
 
-      // gated error responsibility
       this.error.gated = this.derivative * error;
 
-      // error responsibility - Eq. 23
       this.error.responsibility = this.error.projected + this.error.gated;
     }
 
-    // learning rate
     rate = rate || .1;
 
-    // adjust all the neuron's incoming connections
     for (var id in this.connections.inputs) {
       var input = this.connections.inputs[id];
 
-      // Eq. 24
       var gradient = this.error.projected * this.trace.elegibility[input.ID];
       for (var id in this.trace.extended) {
         var neuron = this.neighboors[id];
         gradient += neuron.error.responsibility * this.trace.extended[
           neuron.ID][input.ID];
       }
-      input.weight += rate * gradient; // adjust weights - aka learn
+      input.weight += rate * gradient;
     }
 
-    // adjust bias
     this.bias += rate * this.error.responsibility;
   }
 
   project(neuron, weight) {
-    // self-connection
     if (neuron == this) {
       this.selfconnection.weight = 1;
       return this.selfconnection;
     }
 
-    // check if connection already exists
     var connected = this.connected(neuron);
     if (connected && connected.type == 'projected') {
-      // update connection
       if (typeof weight != 'undefined')
         connected.connection.weight = weight;
-      // return existing connection
       return connected.connection;
     } else {
-      // create a new connection
       var connection = new Connection(this, neuron, weight);
     }
 
-    // reference all the connections and traces
     this.connections.projected[connection.ID] = connection;
     this.neighboors[neuron.ID] = neuron;
     neuron.connections.inputs[connection.ID] = connection;
@@ -235,12 +174,10 @@ export class Neuron {
   }
 
   gate(connection) {
-    // add connection to gated list
     this.connections.gated[connection.ID] = connection;
 
     var neuron = connection.to;
     if (!(neuron.ID in this.trace.extended)) {
-      // extended trace
       this.neighboors[neuron.ID] = neuron;
       var xtrace = this.trace.extended[neuron.ID] = {};
       for (var id in this.connections.inputs) {
@@ -249,22 +186,18 @@ export class Neuron {
       }
     }
 
-    // keep track
     if (neuron.ID in this.trace.influences)
       this.trace.influences[neuron.ID].push(connection);
     else
       this.trace.influences[neuron.ID] = [connection];
 
-    // set gater
     connection.gater = this;
   }
 
-// returns true or false whether the neuron is self-connected or not
   selfconnected() {
     return this.selfconnection.weight !== 0;
   }
 
-// returns true or false whether the neuron is connected to another neuron (parameter)
   connected(neuron) {
     var result = {
       type: null,
@@ -298,14 +231,13 @@ export class Neuron {
     return false;
   }
 
-// clears all the traces (the neuron forgets it's context, but the connections remain intact)
   clear() {
-    for (var trace in this.trace.elegibility) {
+    for (const trace in this.trace.elegibility) {
       this.trace.elegibility[trace] = 0;
     }
 
-    for (var trace in this.trace.extended) {
-      for (var extended in this.trace.extended[trace]) {
+    for (const trace in this.trace.extended) {
+      for (const extended in this.trace.extended[trace]) {
         this.trace.extended[trace][extended] = 0;
       }
     }
@@ -313,7 +245,6 @@ export class Neuron {
     this.error.responsibility = this.error.projected = this.error.gated = 0;
   }
 
-// all the connections are randomized and the traces are cleared
   reset() {
     this.clear();
 
@@ -327,7 +258,6 @@ export class Neuron {
     this.old = this.state = this.activation = 0;
   }
 
-// hardcodes the behaviour of the neuron into an optimized function
   optimize(optimized, layer) {
 
     optimized = optimized || {};
@@ -343,9 +273,8 @@ export class Neuron {
     var activation_sentences = optimized.activation_sentences || [];
     var trace_sentences = optimized.trace_sentences || [];
     var propagation_sentences = optimized.propagation_sentences || [];
-    var layers = optimized.layers || {__count: 0, __neuron: 0};
+    var layers = optimized.layers || { __count: 0, __neuron: 0 };
 
-    // allocate sentences
     var allocate = function (store) {
       var allocated = layer in layers && store[layers.__count];
       if (!allocated) {
@@ -358,7 +287,6 @@ export class Neuron {
     allocate(propagation_sentences);
     var currentLayer = layers.__count;
 
-    // get/reserve space in memory by creating a unique ID for a variablel
     var getVar = function () {
       var args = Array.prototype.slice.call(arguments);
 
@@ -399,7 +327,6 @@ export class Neuron {
       }
     };
 
-    // build sentence
     var buildSentence = function () {
       var args = Array.prototype.slice.call(arguments);
       var store = args.pop();
@@ -413,7 +340,6 @@ export class Neuron {
       store.push(sentence + ';');
     };
 
-    // helper to check if an object is empty
     var isEmpty = function (obj) {
       for (var prop in obj) {
         if (obj.hasOwnProperty(prop))
@@ -422,13 +348,11 @@ export class Neuron {
       return true;
     };
 
-    // characteristics of the neuron
     var noProjections = isEmpty(this.connections.projected);
     var noGates = isEmpty(this.connections.gated);
     var isInput = layer == 'input' ? true : isEmpty(this.connections.inputs);
     var isOutput = layer == 'output' ? true : noProjections && noGates;
 
-    // optimize neuron's behaviour
     var rate = getVar('rate');
     var activation = getVar(this, 'activation');
     if (isInput)
@@ -449,7 +373,7 @@ export class Neuron {
         if (this.selfconnection.gater)
           buildSentence(state, ' = ', self_gain, ' * ', self_weight, ' * ',
             state, ' + ', bias, store_activation);
-        else
+        else 
           buildSentence(state, ' = ', self_weight, ' * ', state, ' + ',
             bias, store_activation);
       else
@@ -498,7 +422,6 @@ export class Neuron {
       }
 
       for (var id in this.trace.extended) {
-        // calculate extended elegibility traces in advance
         var neuron = this.neighboors[id];
         var influence = getVar('influences[' + neuron.ID + ']');
         var neuron_old = getVar(neuron, 'old');
@@ -509,9 +432,9 @@ export class Neuron {
         }
         for (var incoming in this.trace.influences[neuron.ID]) {
           var incoming_weight = getVar(this.trace.influences[neuron.ID]
-            [incoming], 'weight');
+          [incoming], 'weight');
           var incoming_activation = getVar(this.trace.influences[neuron.ID]
-            [incoming].from, 'activation');
+          [incoming].from, 'activation');
 
           if (initialized)
             buildSentence(influence, ' += ', incoming_weight, ' * ', incoming_activation, store_trace);
@@ -554,7 +477,6 @@ export class Neuron {
             buildSentence(trace, ' = ', input_activation, store_trace);
         }
         for (var id in this.trace.extended) {
-          // extended elegibility trace
           var neuron = this.neighboors[id];
           var influence = getVar('influences[' + neuron.ID + ']');
 
